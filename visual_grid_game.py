@@ -6,10 +6,19 @@ import tkinter as tk
 class VisualGridHuntGame:
     """A flexible Pacman-style grid environment with support for configurable opponents and larger scales."""
 
+    # Direction vectors used both for movement and for the (legacy) "facing" sensor
+    DIRS = {
+        'Up': (0, 1),
+        'Down': (0, -1),
+        'Left': (-1, 0),
+        'Right': (1, 0),
+    }
+
     def __init__(self, width=10, height=10, num_food=10, num_opponents=2, num_traps=5, custom_walls=None):
         self.width = width
         self.height = height
         self.agent_pos = [0, 0]  # Starting position (x, y)
+        self.facing = 'Up'       # Default facing direction used by get_percept()
 
         if custom_walls is not None:
             self.walls = set(custom_walls)
@@ -63,6 +72,13 @@ class VisualGridHuntGame:
         return {
             'wall_ahead': wall_ahead,
             'food_here': food_here,
+            # --- New keys added for Practical 03 (Step 1.1) ---
+            # These expose the full world model so the agent can build an
+            # internal state-space representation and run BFS/DFS/UCS on it.
+            'agent_pos': tuple(self.agent_pos),
+            'grid_size': (self.width, self.height),
+            'walls': list(self.walls),
+            'all_food': list(self.food_positions),
         }
 
     def execute_action(self, action: str):
@@ -113,12 +129,16 @@ class VisualGridHuntGame:
 class GridGameGUI:
     """Tkinter wrapper that dynamically scales cell sizes to keep larger grids on screen."""
 
-    def __init__(self, root, width=10, height=10, num_food=12, num_opponents=2, walls=None):
+    def __init__(self, root, width=10, height=10, num_food=12, num_opponents=2, walls=None, agent=None):
         self.root = root
         self.root.title("IT3012 - Scalable Multi-Agent Grid Hunt")
 
         self.env = VisualGridHuntGame(width=width, height=height, num_food=num_food, num_opponents=num_opponents,
                                       custom_walls=walls)
+
+        # The Goal-Based/Planning agent (SearchAgent) driving the simulation.
+        # If none is supplied, fall back to random movement (old Practical 1/2 behaviour).
+        self.agent = agent
 
         # Dynamically calculate cell size so the total canvas fits nicely within a 600x600 window ceiling
         max_canvas_dim = 600
@@ -198,7 +218,11 @@ class GridGameGUI:
 
         def step():
             if not self.env.is_done():
-                action = random.choice(['Up', 'Down', 'Left', 'Right'])
+                if self.agent is not None:
+                    percept = self.env.get_percept()
+                    action = self.agent.sense_and_act(percept)
+                else:
+                    action = random.choice(['Up', 'Down', 'Left', 'Right'])
                 self.env.execute_action(action)
 
                 self.draw_grid()
@@ -213,7 +237,17 @@ class GridGameGUI:
 
 
 if __name__ == "__main__":
+    from agent import SearchAgent
+
     root = tk.Tk()
+
+    # Build the Goal-Based/Planning agent for Practical 03.
+    search_agent = SearchAgent()
+
+    # --- Observation Task ---
+    # Change this to 'BFS', 'DFS', or 'UCS' and re-run to compare the paths taken.
+    search_agent.active_algo = 'BFS'
+
     # Try a larger grid size like 12x12 with 15 food and 3 opponents!
-    app = GridGameGUI(root, width=12, height=12, num_food=15, num_opponents=0)
+    app = GridGameGUI(root, width=12, height=12, num_food=15, num_opponents=0, agent=search_agent)
     root.mainloop()
