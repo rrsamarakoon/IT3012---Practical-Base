@@ -245,8 +245,9 @@ if __name__ == "__main__":
     search_agent = SearchAgent()
 
     # --- Observation Task ---
-    # Change this to 'BFS', 'DFS', or 'UCS' and re-run to compare the paths taken.
-    search_agent.active_algo = 'BFS'
+    # Change this to 'BFS', 'DFS', 'UCS', or 'AStar' and re-run to compare the paths taken.
+    search_agent.active_algo = 'AStar'
+    search_agent.heuristic_type = 'manhattan'  # or 'euclidean'
 
     # Try a larger grid size like 12x12 with 15 food and 3 opponents!
     app = GridGameGUI(root, width=12, height=12, num_food=15, num_opponents=0, agent=search_agent)

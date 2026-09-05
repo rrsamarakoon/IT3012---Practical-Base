@@ -1,6 +1,7 @@
 # agent.py
 import random
 import heapq
+import math
 from collections import deque
 
 
@@ -83,7 +84,8 @@ class SearchAgent:
 
     def __init__(self):
         self.plan = []               # The queued sequence of actions to execute
-        self.active_algo = 'BFS'     # 'BFS' | 'DFS' | 'UCS' - swap to compare strategies
+        self.active_algo = 'BFS'     # 'BFS' | 'DFS' | 'UCS' | 'AStar' - swap to compare strategies
+        self.heuristic_type = 'manhattan'  # 'manhattan' | 'euclidean' - used by A*
 
     # ------------------------------------------------------------------ #
     # Helpers
@@ -108,6 +110,31 @@ class SearchAgent:
             all_food,
             key=lambda f: abs(f[0] - agent_pos[0]) + abs(f[1] - agent_pos[1])
         )
+
+    # ------------------------------------------------------------------ #
+    # Practical 04 / Step 1.1 - Heuristic functions
+    # ------------------------------------------------------------------ #
+    def manhattan_distance(self, pos, goal):
+        """h(n) = |x1 - x2| + |y1 - y2|  -- sum of horizontal + vertical steps.
+        Admissible for 4-way (grid) movement since it never overestimates the
+        true minimum number of moves needed to reach the goal."""
+        x1, y1 = pos
+        x2, y2 = goal
+        return abs(x1 - x2) + abs(y1 - y2)
+
+    def euclidean_distance(self, pos, goal):
+        """h(n) = sqrt((x1 - x2)^2 + (y1 - y2)^2) -- straight-line distance."""
+        x1, y1 = pos
+        x2, y2 = goal
+        return math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
+
+    def _heuristic(self, pos, goal, heuristic_type):
+        if heuristic_type == 'manhattan':
+            return self.manhattan_distance(pos, goal)
+        elif heuristic_type == 'euclidean':
+            return self.euclidean_distance(pos, goal)
+        else:
+            raise ValueError(f"Unknown heuristic_type: {heuristic_type}")
 
     # ------------------------------------------------------------------ #
     # Step 1.2 - Uninformed search strategies
@@ -196,6 +223,51 @@ class SearchAgent:
         return None  # Goal unreachable
 
     # ------------------------------------------------------------------ #
+    # Practical 04 / Step 1.2 - A* Search (Informed search)
+    # ------------------------------------------------------------------ #
+    def astar_search(self, start_pos, goal_pos, walls, grid_size, heuristic_type='manhattan'):
+        """A* Search - Priority Queue ordered by f(n) = g(n) + h(n).
+        g(n) is the exact cost so far (as in UCS); h(n) is the estimated
+        remaining cost supplied by manhattan_distance/euclidean_distance.
+        Because h(n) is admissible, the first time we pop the goal we are
+        guaranteed to have found an optimal path."""
+        walls = set(walls)
+        start_pos, goal_pos = tuple(start_pos), tuple(goal_pos)
+
+        if start_pos == goal_pos:
+            return []
+
+        counter = 0  # tie-breaker so heapq never has to compare paths/tuples directly
+        h_start = self._heuristic(start_pos, goal_pos, heuristic_type)
+        frontier = [(h_start, 0, counter, start_pos, [])]  # (f_cost, g_cost, tie, pos, path)
+        heapq.heapify(frontier)
+        reached_states = set()
+        best_g = {start_pos: 0}
+
+        while frontier:
+            f_cost, g_cost, _, current_pos, path_taken = heapq.heappop(frontier)
+
+            if current_pos == goal_pos:
+                return path_taken
+
+            if current_pos in reached_states:
+                continue
+            reached_states.add(current_pos)
+
+            for action, nxt in self._get_successors(current_pos, walls, grid_size):
+                if nxt in reached_states:
+                    continue
+                g_new = g_cost + 1
+                if g_new < best_g.get(nxt, float('inf')):
+                    best_g[nxt] = g_new
+                    h_new = self._heuristic(nxt, goal_pos, heuristic_type)
+                    f_new = g_new + h_new
+                    counter += 1
+                    heapq.heappush(frontier, (f_new, g_new, counter, nxt, path_taken + [action]))
+
+        return None  # Goal unreachable
+
+    # ------------------------------------------------------------------ #
     # Step 1.3 - Forming and executing an offline plan
     # ------------------------------------------------------------------ #
     def sense_and_act(self, percept: dict) -> str:
@@ -217,6 +289,11 @@ class SearchAgent:
                 self.plan = self.dfs_search(agent_pos, goal, walls, grid_size) or []
             elif self.active_algo == 'UCS':
                 self.plan = self.ucs_search(agent_pos, goal, walls, grid_size) or []
+            elif self.active_algo == 'AStar':
+                self.plan = self.astar_search(
+                    agent_pos, goal, walls, grid_size,
+                    heuristic_type=self.heuristic_type
+                ) or []
             else:
                 raise ValueError(f"Unknown active_algo: {self.active_algo}")
 
@@ -226,3 +303,13 @@ class SearchAgent:
                 return random.choice(list(self.ACTIONS.keys()))
 
         return self.plan.pop(0)
+
+
+if __name__ == "__main__":
+    # --- Step 1.1 Testing Checkpoint ---
+    # Verify the heuristic functions against a mock start/goal pair.
+    # Expected: Manhattan = 7, Euclidean = 5.0
+    agent = SearchAgent()
+    start, goal = (0, 0), (3, 4)
+    print("Manhattan distance:", agent.manhattan_distance(start, goal))
+    print("Euclidean distance:", agent.euclidean_distance(start, goal))
