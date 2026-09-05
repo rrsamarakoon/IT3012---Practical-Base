@@ -3,11 +3,10 @@ import random
 import heapq
 import math
 from collections import deque
+from logic_engine import KnowledgeBase
 
 
 class GreedyGridAgent:
-    """A simple agent that tries to move around systematically to clear the grid."""
-
     def __init__(self):
         self.actions_pool = ['Up', 'Down', 'Left', 'Right']
 
@@ -65,14 +64,6 @@ class ModelBasedAgent:
 
 
 class SearchAgent:
-    """
-    Practical 03: Goal-Based / Planning Agent.
-
-    Unlike SimpleReflexAgent / ModelBasedAgent (which react cell-by-cell),
-    this agent is given the full world model via the percept and forms a
-    complete plan (a sequence of actions) BEFORE it ever moves, using
-    uninformed search (BFS, DFS or UCS) over the grid's state space.
-    """
 
     # Action -> (dx, dy). Kept identical to VisualGridHuntGame's movement logic.
     ACTIONS = {
@@ -85,11 +76,12 @@ class SearchAgent:
     def __init__(self):
         self.plan = []               # The queued sequence of actions to execute
         self.active_algo = 'BFS'     # 'BFS' | 'DFS' | 'UCS' | 'AStar' - swap to compare strategies
-        self.heuristic_type = 'manhattan'  # 'manhattan' | 'euclidean' - used by A*
+        self.heuristic_type = 'manhattan'  
+        self.kb = KnowledgeBase()
+        self.kb.tell_rule(['TargetVisible', 'HasDust'], 'SafeToEngage')
+        self.kb.tell_rule(['SafeToEngage', 'BloodseekerMissing'], 'Retreat')
+        self.has_dust = True
 
-    # ------------------------------------------------------------------ #
-    # Helpers
-    # ------------------------------------------------------------------ #
     def _in_bounds(self, pos, grid_size):
         x, y = pos
         width, height = grid_size
@@ -111,13 +103,7 @@ class SearchAgent:
             key=lambda f: abs(f[0] - agent_pos[0]) + abs(f[1] - agent_pos[1])
         )
 
-    # ------------------------------------------------------------------ #
-    # Practical 04 / Step 1.1 - Heuristic functions
-    # ------------------------------------------------------------------ #
     def manhattan_distance(self, pos, goal):
-        """h(n) = |x1 - x2| + |y1 - y2|  -- sum of horizontal + vertical steps.
-        Admissible for 4-way (grid) movement since it never overestimates the
-        true minimum number of moves needed to reach the goal."""
         x1, y1 = pos
         x2, y2 = goal
         return abs(x1 - x2) + abs(y1 - y2)
@@ -189,9 +175,6 @@ class SearchAgent:
         return None  # Goal unreachable
 
     def ucs_search(self, start_pos, goal_pos, walls, grid_size):
-        """Uniform-Cost Search - Priority Queue ordered by path cost g(n).
-        Every step costs 1 here, so UCS degenerates to BFS, but the frontier
-        is still a genuine priority queue as required by the practical."""
         walls = set(walls)
         start_pos, goal_pos = tuple(start_pos), tuple(goal_pos)
 
@@ -220,18 +203,48 @@ class SearchAgent:
                     counter += 1
                     heapq.heappush(frontier, (new_cost, counter, nxt, path + [action]))
 
-        return None  # Goal unreachable
+        return None  
+    def _tile_facts(self, tile, opponents, toxic_traps):
+        facts = []
 
-    # ------------------------------------------------------------------ #
-    # Practical 04 / Step 1.2 - A* Search (Informed search)
-    # ------------------------------------------------------------------ #
-    def astar_search(self, start_pos, goal_pos, walls, grid_size, heuristic_type='manhattan'):
-        """A* Search - Priority Queue ordered by f(n) = g(n) + h(n).
-        g(n) is the exact cost so far (as in UCS); h(n) is the estimated
-        remaining cost supplied by manhattan_distance/euclidean_distance.
-        Because h(n) is admissible, the first time we pop the goal we are
-        guaranteed to have found an optimal path."""
+        target_visible = any(
+            abs(op[0] - tile[0]) + abs(op[1] - tile[1]) <= 2
+            for op in opponents
+        )
+        if target_visible:
+            facts.append('TargetVisible')
+
+        if self.has_dust:
+            facts.append('HasDust')
+
+        bloodseeker_missing = not any(
+            abs(op[0] - tile[0]) + abs(op[1] - tile[1]) <= 1
+            for op in opponents
+        )
+        if bloodseeker_missing:
+            facts.append('BloodseekerMissing')
+
+        return facts
+
+    def _is_tile_feasible(self, tile, opponents, toxic_traps):
+        """Step 3.2: consult the KB (not just physical walls) before letting
+        A* expand into this tile. Returns False (Infeasible) if the KB
+        deduces 'Retreat' for this tile's percepts."""
+        if not opponents:
+            return True  # nothing to reason about - always feasible
+
+        self.kb.clear_facts()
+        for fact in self._tile_facts(tile, opponents, toxic_traps):
+            self.kb.tell_fact(fact)
+        self.kb.forward_chain()
+
+        return 'Retreat' not in self.kb.facts
+
+    def astar_search(self, start_pos, goal_pos, walls, grid_size, heuristic_type='manhattan',
+                      opponents=None, toxic_traps=None):
         walls = set(walls)
+        opponents = opponents or []
+        toxic_traps = toxic_traps or []
         start_pos, goal_pos = tuple(start_pos), tuple(goal_pos)
 
         if start_pos == goal_pos:
@@ -257,6 +270,9 @@ class SearchAgent:
             for action, nxt in self._get_successors(current_pos, walls, grid_size):
                 if nxt in reached_states:
                     continue
+                if not self._is_tile_feasible(nxt, opponents, toxic_traps):
+                    continue 
+
                 g_new = g_cost + 1
                 if g_new < best_g.get(nxt, float('inf')):
                     best_g[nxt] = g_new
@@ -265,11 +281,7 @@ class SearchAgent:
                     counter += 1
                     heapq.heappush(frontier, (f_new, g_new, counter, nxt, path_taken + [action]))
 
-        return None  # Goal unreachable
-
-    # ------------------------------------------------------------------ #
-    # Step 1.3 - Forming and executing an offline plan
-    # ------------------------------------------------------------------ #
+        return None  
     def sense_and_act(self, percept: dict) -> str:
         if not self.plan:
             agent_pos = percept['agent_pos']
@@ -292,23 +304,20 @@ class SearchAgent:
             elif self.active_algo == 'AStar':
                 self.plan = self.astar_search(
                     agent_pos, goal, walls, grid_size,
-                    heuristic_type=self.heuristic_type
+                    heuristic_type=self.heuristic_type,
+                    opponents=percept.get('opponents', []),
+                    toxic_traps=percept.get('toxic_traps', []),
                 ) or []
             else:
                 raise ValueError(f"Unknown active_algo: {self.active_algo}")
 
             if not self.plan:
-                # Goal unreachable - fall back to a random legal-ish move so the
-                # simulation doesn't stall forever.
                 return random.choice(list(self.ACTIONS.keys()))
 
         return self.plan.pop(0)
 
 
 if __name__ == "__main__":
-    # --- Step 1.1 Testing Checkpoint ---
-    # Verify the heuristic functions against a mock start/goal pair.
-    # Expected: Manhattan = 7, Euclidean = 5.0
     agent = SearchAgent()
     start, goal = (0, 0), (3, 4)
     print("Manhattan distance:", agent.manhattan_distance(start, goal))
